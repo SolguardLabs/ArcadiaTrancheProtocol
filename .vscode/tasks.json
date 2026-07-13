@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "forge build",
+      "type": "shell",
+      "command": "forge build",
+      "problemMatcher": []
+    },
+    {
+      "label": "forge test",
+      "type": "shell",
+      "command": "forge test",
+      "problemMatcher": []
+    },
+    {
+      "label": "local ci",
+      "type": "shell",
+      "command": "bash scripts/ci.sh",
+      "problemMatcher": []
+    }
+  ]
+}
