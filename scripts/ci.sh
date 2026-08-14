@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 bash scripts/bootstrap.sh
-forge fmt --check
-forge build --sizes
-FOUNDRY_PROFILE=ci forge test -vvv
+FORGE="${FORGE_BIN:-forge}"
+"$FORGE" fmt --check
+"$FORGE" build --sizes
+FOUNDRY_PROFILE=ci "$FORGE" test -vvv

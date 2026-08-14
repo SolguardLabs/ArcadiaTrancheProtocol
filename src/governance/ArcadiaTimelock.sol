@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { ArcadiaRoles } from "../access/ArcadiaRoles.sol";
 import {
     Arcadia__Unauthorized,
+    Arcadia__ValueOverflow,
     Arcadia__ZeroAddress,
     Arcadia__ZeroAmount
 } from "../errors/ArcadiaErrors.sol";
@@ -74,12 +75,16 @@ contract ArcadiaTimelock is ArcadiaRoles {
         if (target == address(0)) revert Arcadia__ZeroAddress();
         uint64 effectiveDelay = delay < minDelay ? minDelay : delay;
         id = hashOperation(target, value, data, predecessor, salt);
-        Operation storage operation = _operations[id];
-        if (operation.queuedAt != 0 && !operation.cancelled) {
+        Operation storage operation_ = _operations[id];
+        if (operation_.queuedAt != 0 && !operation_.cancelled) {
             revert Arcadia__Unauthorized(bytes32("OPERATION_EXISTS"), msg.sender);
         }
 
-        uint64 executableAt = uint64(block.timestamp + effectiveDelay);
+        uint256 executionTimestamp = block.timestamp + effectiveDelay;
+        if (executionTimestamp > type(uint64).max) {
+            revert Arcadia__ValueOverflow(executionTimestamp);
+        }
+        uint64 executableAt = uint64(executionTimestamp);
         _operations[id] = Operation({
             id: id,
             target: target,
@@ -97,32 +102,32 @@ contract ArcadiaTimelock is ArcadiaRoles {
     }
 
     function cancel(bytes32 id) external onlyRole(ArcadiaTypes.GUARDIAN_ROLE) {
-        Operation storage operation = _operations[id];
-        if (operation.queuedAt == 0 || operation.executed || operation.cancelled) {
+        Operation storage operation_ = _operations[id];
+        if (operation_.queuedAt == 0 || operation_.executed || operation_.cancelled) {
             revert Arcadia__Unauthorized(bytes32("OPERATION_STATE"), msg.sender);
         }
-        operation.cancelled = true;
+        operation_.cancelled = true;
         emit OperationCancelled(id);
     }
 
     function execute(bytes32 id) external payable returns (bytes memory result) {
-        Operation storage operation = _operations[id];
-        _requireReady(operation);
-        if (operation.predecessor != bytes32(0) && !done[operation.predecessor]) {
+        Operation storage operation_ = _operations[id];
+        _requireReady(operation_);
+        if (operation_.predecessor != bytes32(0) && !done[operation_.predecessor]) {
             revert Arcadia__Unauthorized(bytes32("PREDECESSOR"), msg.sender);
         }
 
-        operation.executed = true;
+        operation_.executed = true;
         done[id] = true;
         (bool success, bytes memory returndata) =
-            operation.target.call{ value: operation.value }(operation.data);
+            operation_.target.call{ value: operation_.value }(operation_.data);
         if (!success) {
             assembly ("memory-safe") {
                 revert(add(returndata, 0x20), mload(returndata))
             }
         }
 
-        emit OperationExecuted(id, operation.target, operation.value);
+        emit OperationExecuted(id, operation_.target, operation_.value);
         return returndata;
     }
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { IERC20 } from "../interfaces/IERC20.sol";
 import { IArcadiaVault } from "../interfaces/IArcadiaVault.sol";
+import { Arcadia__ValueOverflow } from "../errors/ArcadiaErrors.sol";
 import { FixedPointMath } from "../libraries/FixedPointMath.sol";
 import { ProtocolSnapshot, Tranche, TrancheState } from "../types/ArcadiaTypes.sol";
 
@@ -56,8 +57,13 @@ contract ArcadiaMonitor {
         ProtocolSnapshot memory snap = vault.snapshot();
         uint256 liquid = asset.balanceOf(address(vault));
         if (liquid >= snap.totalAccountedAssets) {
-            return int256(liquid - snap.totalAccountedAssets);
+            return _toInt256(liquid - snap.totalAccountedAssets);
         }
-        return -int256(snap.totalAccountedAssets - liquid);
+        return -_toInt256(snap.totalAccountedAssets - liquid);
+    }
+
+    function _toInt256(uint256 value) internal pure returns (int256) {
+        if (value > uint256(type(int256).max)) revert Arcadia__ValueOverflow(value);
+        return int256(value);
     }
 }

@@ -7,6 +7,7 @@ import {
     Arcadia__PriceConfidenceLow,
     Arcadia__StrategyReportStale,
     Arcadia__Unauthorized,
+    Arcadia__ValueOverflow,
     Arcadia__ZeroAddress,
     Arcadia__ZeroAmount
 } from "../errors/ArcadiaErrors.sol";
@@ -100,11 +101,11 @@ contract ArcadiaNavOracle is ArcadiaRoles {
         _requireSource(id);
         if (reporter == address(0)) revert Arcadia__ZeroAddress();
         _validateSource(minConfidenceBps, heartbeat);
-        NavSource storage source = _sources[id];
-        source.reporter = reporter;
-        source.minConfidenceBps = minConfidenceBps;
-        source.heartbeat = heartbeat;
-        source.active = active;
+        NavSource storage source_ = _sources[id];
+        source_.reporter = reporter;
+        source_.minConfidenceBps = minConfidenceBps;
+        source_.heartbeat = heartbeat;
+        source_.active = active;
         emit SourceUpdated(id, reporter, minConfidenceBps, heartbeat, active);
     }
 
@@ -125,14 +126,14 @@ contract ArcadiaNavOracle is ArcadiaRoles {
         uint256 confidenceBps,
         bytes32 payloadHash
     ) external {
-        NavSource memory source = _requireSource(sourceId);
-        if (!source.active) revert Arcadia__Unauthorized(bytes32("SOURCE_INACTIVE"), msg.sender);
-        if (msg.sender != source.reporter && !hasRole(ArcadiaTypes.REPORTER_ROLE, msg.sender)) {
+        NavSource memory source_ = _requireSource(sourceId);
+        if (!source_.active) revert Arcadia__Unauthorized(bytes32("SOURCE_INACTIVE"), msg.sender);
+        if (msg.sender != source_.reporter && !hasRole(ArcadiaTypes.REPORTER_ROLE, msg.sender)) {
             revert Arcadia__Unauthorized(ArcadiaTypes.REPORTER_ROLE, msg.sender);
         }
         if (nav == 0) revert Arcadia__ZeroAmount();
-        if (confidenceBps < source.minConfidenceBps) {
-            revert Arcadia__PriceConfidenceLow(confidenceBps, source.minConfidenceBps);
+        if (confidenceBps < source_.minConfidenceBps) {
+            revert Arcadia__PriceConfidenceLow(confidenceBps, source_.minConfidenceBps);
         }
         if (confidenceBps > ArcadiaTypes.BPS) revert Arcadia__InvalidBps(confidenceBps);
 
@@ -161,14 +162,14 @@ contract ArcadiaNavOracle is ArcadiaRoles {
         view
         returns (NavObservation memory observation)
     {
-        NavSource memory source = _requireSource(sourceId);
+        NavSource memory source_ = _requireSource(sourceId);
         observation = _latest[sourceId];
         if (observation.observedAt == 0) {
-            revert Arcadia__StrategyReportStale(address(0), 0, source.heartbeat);
+            revert Arcadia__StrategyReportStale(address(0), 0, source_.heartbeat);
         }
-        if (block.timestamp > uint256(observation.observedAt) + source.heartbeat) {
+        if (block.timestamp > uint256(observation.observedAt) + source_.heartbeat) {
             revert Arcadia__StrategyReportStale(
-                address(0), observation.observedAt, source.heartbeat
+                address(0), observation.observedAt, source_.heartbeat
             );
         }
     }
@@ -196,10 +197,10 @@ contract ArcadiaNavOracle is ArcadiaRoles {
         if (observation.liquidAssets == 0) return 0;
         if (observation.estimatedAssets >= observation.liquidAssets) {
             uint256 premium = observation.estimatedAssets - observation.liquidAssets;
-            return int256(FixedPointMath.ratioBps(premium, observation.liquidAssets));
+            return _toInt256(FixedPointMath.ratioBps(premium, observation.liquidAssets));
         }
         uint256 discount = observation.liquidAssets - observation.estimatedAssets;
-        return -int256(FixedPointMath.ratioBps(discount, observation.liquidAssets));
+        return -_toInt256(FixedPointMath.ratioBps(discount, observation.liquidAssets));
     }
 
     function _requireSource(bytes32 id) internal view returns (NavSource memory source_) {
@@ -210,5 +211,10 @@ contract ArcadiaNavOracle is ArcadiaRoles {
     function _validateSource(uint16 minConfidenceBps, uint64 heartbeat) internal pure {
         if (minConfidenceBps > ArcadiaTypes.BPS) revert Arcadia__InvalidBps(minConfidenceBps);
         if (heartbeat == 0) revert Arcadia__ZeroAmount();
+    }
+
+    function _toInt256(uint256 value) internal pure returns (int256) {
+        if (value > uint256(type(int256).max)) revert Arcadia__ValueOverflow(value);
+        return int256(value);
     }
 }

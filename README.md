@@ -1,115 +1,165 @@
-# Arcadia Tranche Protocol
+# ArcadiaTrancheProtocol
 
-![banner](./assets/banner.png)
+![ArcadiaTrancheProtocol](./assets/banner.png)
 
-Arcadia Tranche Protocol es una implementación Solidity/Foundry de un vault
-multi-tranche. Los depositantes pueden seleccionar exposición senior, mezzanine
-o junior, recibir recibos ERC-20 y participar en una waterfall de rendimiento
-con absorción de pérdidas ordenada por prioridad de tranche.
+[![CI](https://github.com/SolguardLabs/ArcadiaTrancheProtocol/actions/workflows/ci.yml/badge.svg)](https://github.com/SolguardLabs/ArcadiaTrancheProtocol/actions/workflows/ci.yml)
+[![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?logo=solidity)](https://docs.soliditylang.org/)
+[![Foundry](https://img.shields.io/badge/Foundry-1.7.1-111111)](https://book.getfoundry.sh/)
+[![License](https://img.shields.io/badge/License-MIT-f4e9d8)](./LICENSE)
 
-Los contratos separan accounting de vault, tokens de shares, matemáticas de
-waterfall, oráculo de riesgo, vistas operativas, monitorización y estrategia de
-buffer.
+Arcadia es una infraestructura de crédito estructurado on-chain que agrupa un activo de
+liquidación y distribuye capital, rendimiento y pérdidas entre tres niveles de prioridad:
+`Senior`, `Mezzanine` y `Junior`. El sistema separa el libro contable del vault, la custodia de
+shares, la asignación matemática, el riesgo, las estrategias, la gobernanza y la observabilidad.
+
+La versión `1.0.0` incorpora un motor determinista de escenarios, evidencias contables
+encadenadas, límites de flujo diarios, fuentes NAV con heartbeat, registro de deuda por estrategia,
+cola de redenciones y ejecución administrativa con timelock.
 
 ## Arquitectura
 
-```text
-                    +--------------------+
-                    | ArcadiaRiskOracle  |
-                    +----------+---------+
-                               |
-+---------------+     +--------v---------+      +-------------------+
-| Share Tokens  |<----| ArcadiaTranche   |----->| ArcadiaLens       |
-| aSEN/aMEZ/aJUN|     | Vault            |      | ArcadiaMonitor    |
-+---------------+     +---+----------+---+      +-------------------+
-                           |          |
-                           |          v
-                           |   ArcadiaBufferedStrategy
-                           v
-                     Underlying ERC-20
+```mermaid
+flowchart LR
+    U["Depositantes"] -->|"activo subyacente"| V["ArcadiaTrancheVault"]
+    V -->|"mintea / quema"| T["Shares Senior · Mezzanine · Junior"]
+    V --> W["WaterfallMath"]
+    V --> SR["ArcadiaStrategyRegistry"]
+    SR --> S1["Estrategias activas"]
+    RQ["RedemptionQueue"] --> V
+    NO["ArcadiaNavOracle"] --> RM["Motor de riesgo"]
+    RO["ArcadiaRiskOracle"] --> RM
+    SE["ArcadiaScenarioEngine"] --> RM
+    V --> CP["ArcadiaCheckpointRegistry"]
+    CP --> O["Keepers · reconciliación · alertas"]
+    V --> L["ArcadiaLens / ArcadiaMonitor"]
+    TL["ArcadiaTimelock"] -->|"cambios demorados"| V
 ```
 
-- `ArcadiaTrancheVault` gestiona depósitos, redenciones, harvest allocation,
-  loss reports, pausa y emergency unwind.
-- `TrancheShareToken` es el recibo ERC-20 de cada tranche.
-- `WaterfallMath` y `FixedPointMath` aíslan cálculos deterministas de
-  accounting.
-- `ArcadiaRiskOracle` almacena bandas de riesgo y metadata de observación.
-- `ArcadiaLens` agrega vistas de protocolo y cuenta para frontends.
-- `ArcadiaMonitor` expone health checks para keepers.
-- `ArcadiaBufferedStrategy` es un adapter local para flujos de despliegue y
-  pruebas.
+| Capa | Componentes | Responsabilidad |
+| --- | --- | --- |
+| Capital | `ArcadiaTrancheVault`, `TrancheShareToken` | Custodia, books, depósitos y redenciones |
+| Matemática | `WaterfallMath`, `FixedPointMath` | Precios, shares, waterfall de ingresos y pérdidas |
+| Riesgo | `ArcadiaRiskOracle`, `ArcadiaNavOracle`, `ArcadiaScenarioEngine` | Bandas, observaciones frescas y stress testing |
+| Estrategia | `ArcadiaStrategyRegistry`, `ArcadiaBufferedStrategy` | Límites de deuda, liquidez y reconciliación |
+| Operación | `RedemptionQueue`, `TrancheParameterStore`, `ReserveLedger` | Ventanas de salida, límites diarios y reservas |
+| Control | `ArcadiaTimelock`, `ArcadiaCheckpointRegistry` | Gobernanza diferida y trazabilidad del estado |
+| Lectura | `ArcadiaLens`, `ArcadiaMonitor` | Snapshots agregados, cobertura y salud operativa |
 
-## Tranches
+La descripción completa de límites y relaciones está en
+[Arquitectura](./docs/arquitectura.md).
 
-| Tranche | Posición | Tratamiento de rendimiento | Tratamiento de pérdidas |
-| --- | --- | --- | --- |
-| Senior | Mayor prioridad | Recibe target yield primero | Última en absorber pérdidas |
-| Mezzanine | Prioridad media | Recibe yield tras senior target | Absorbe pérdidas tras junior |
-| Junior | First-loss capital | Recibe yield residual | Primera en absorber pérdidas |
+## Modelo económico
 
-Las shares se valoran desde el estado contable de cada tranche. Las redenciones
-usan el exit price vigente expuesto por el vault, mientras que las redenciones
-de emergencia usan pricing de liquidación basado en el book de cada tranche.
+Cada tranche mantiene activos contabilizados `Aᵢ`, shares `Sᵢ` y precios independientes de entrada
+y salida. Con precisión WAD:
 
-## Flujo operativo
+```text
+sharesEmitidas = activosDepositados × 1e18 / precioEntrada
+activosEntregados = sharesQuemadas × precioSalida / 1e18
+```
 
-1. Los usuarios aprueban el activo subyacente y llaman
-   `deposit(tranche, assets, receiver)`.
-2. El vault mintea shares de tranche usando el entry price correspondiente.
-3. Los keepers llaman `harvest(amount, sourceHash)` tras rendimiento realizado.
-4. El rendimiento se distribuye primero a senior target, luego mezzanine target
-   y finalmente junior residual.
-5. Reporters autorizados llaman `reportLoss(amount, reasonHash)` para registrar
-   pérdidas realizadas.
-6. Los keepers liquidan reports pendientes tras reconciliación.
-7. Los usuarios llaman `redeem(tranche, shares, receiver, owner)` durante
-   operación estándar.
-8. Guardians pueden activar emergency mode y los usuarios pueden salir con
-   liquidation pricing.
+Las pérdidas realizadas recorren el capital en orden inverso a su prioridad:
 
-## Seguridad y controles
+```mermaid
+flowchart LR
+    L["Pérdida realizada L"] --> J["Junior: min(L, Aⱼ)"]
+    J -->|"remanente"| M["Mezzanine: min(R₁, Aₘ)"]
+    M -->|"remanente"| S["Senior: min(R₂, Aₛ)"]
+    S -->|"remanente"| D["Pérdida no asignada"]
+```
 
-Los roles están separados en governor, keeper, reporter, guardian, strategist y
-risk manager. Los contratos asumen comportamiento ERC-20 estándar del activo
-subyacente y no soportan activos con fee-on-transfer.
+En sentido contrario, un harvest neto cubre primero el objetivo Senior, después el objetivo
+Mezzanine y entrega el residual a Junior. El contrato registra los importes realizados y conserva
+una separación explícita entre precio de entrada, precio de salida y precio de liquidación.
 
-Consulta [SECURITY.md](./SECURITY.md) para invariantes, alcance y reporte
-responsable.
+El [modelo económico](./docs/modelo-economico.md) incluye las ecuaciones, un ejemplo numérico
+completo y el cálculo del score de estrés.
 
-## Requisitos
+## Ciclo operativo
 
-- Foundry `1.7.1` o superior.
+1. El usuario aprueba el activo y ejecuta `deposit(tranche, assets, receiver)`.
+2. El vault valida pausas, configuración y cap antes de emitir shares.
+3. Los keepers registran ingresos realizados con `harvest(amount, sourceHash)`.
+4. Los reporters autorizados reflejan pérdidas realizadas mediante reportes reconciliables.
+5. Las salidas directas verifican shares, allowance, precio y liquidez disponible.
+6. La cola opcional reserva capacidad del propietario, aplica un retardo mínimo y conserva su
+   mínimo de activos.
+7. Keepers y operadores comparan snapshots, NAV y checkpoints antes de cada cierre operativo.
+8. Los cambios sensibles se programan y ejecutan a través de `ArcadiaTimelock`.
+
+Consulta el [runbook operativo](./docs/operacion.md) para los estados normales, de degradación y
+emergencia.
+
+## Motor de escenarios
+
+`ArcadiaScenarioEngine.assess` evalúa cinco entradas acotadas a 10.000 bps: pérdida bruta,
+haircut de liquidez, correlación, concentración y buffer líquido mínimo. Devuelve asignación por
+tranche, liquidez estresada, déficit, cobertura Senior, score, nivel de riesgo y un digest
+reproducible.
+
+```solidity
+ArcadiaScenarioEngine.Shock memory shock = ArcadiaScenarioEngine.Shock({
+    lossBps: 2_500,
+    liquidityHaircutBps: 3_000,
+    correlationBps: 4_000,
+    concentrationBps: 3_500,
+    minimumLiquidBufferBps: 5_000
+});
+
+ArcadiaScenarioEngine.ScenarioResult memory result = engine.assess(portfolio, shock);
+```
+
+El score combina pérdida (35 %), liquidez (25 %), correlación (20 %) y concentración (20 %).
+Una pérdida asignada a Senior fuerza el nivel `Restricted`, con independencia del score agregado.
+
+## Puesta en marcha
+
+Requisitos:
+
+- Foundry `1.7.1` o posterior compatible.
 - Solidity `0.8.24`.
-
-## Quick start
+- Bash para los scripts de validación.
 
 ```bash
-forge build
+git clone https://github.com/SolguardLabs/ArcadiaTrancheProtocol.git
+cd ArcadiaTrancheProtocol
+cp .env.example .env
+bash scripts/bootstrap.sh
+forge build --sizes
 forge test
 ```
 
-CI local:
+Validación equivalente a CI:
 
 ```bash
 bash scripts/ci.sh
 ```
 
-Test focalizado:
+Despliegue preparado, después de completar y revisar `.env`:
 
 ```bash
-bash scripts/tests.sh --match-path tests/integration/HarvestAndLoss.t.sol
+source .env
+forge script script/DeployArcadia.s.sol:DeployArcadia \
+  --rpc-url "$RPC_URL" --broadcast --verify
 ```
 
-## Comandos
+No se incluyen direcciones de red predefinidas. La [guía de despliegue](./docs/despliegue.md)
+define precondiciones, roles, orden de configuración y validaciones posteriores.
 
-```bash
-forge fmt --check
-forge build --sizes
-forge test
-FOUNDRY_PROFILE=ci forge test -vvv
-```
+## Documentación
+
+- [Arquitectura y fronteras de confianza](./docs/arquitectura.md)
+- [Modelo económico y escenarios](./docs/modelo-economico.md)
+- [Runbook de operación](./docs/operacion.md)
+- [Despliegue y configuración](./docs/despliegue.md)
+- [Observabilidad y reconciliación](./docs/observabilidad.md)
+- [Política de seguridad](./SECURITY.md)
+
+## Estado de versión
+
+La rama `main` representa la línea estable. La rama `production` apunta al commit publicado. Los
+tags `vMAJOR.MINOR.PATCH` son anotados y su release contiene las notas de entrega correspondientes.
 
 ## Licencia
 
-MIT.
+[MIT](./LICENSE).

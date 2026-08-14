@@ -117,7 +117,7 @@ abstract contract ArcadiaFixture is Test {
         _deposit(CAROL, Tranche.Junior, 500 ether);
     }
 
-    function _assertSettledAccounting() internal {
+    function _assertSettledAccounting() internal view {
         ProtocolSnapshot memory snap = vault.snapshot();
         TrancheState memory senior = vault.trancheState(Tranche.Senior);
         TrancheState memory mezzanine = vault.trancheState(Tranche.Mezzanine);

@@ -6,7 +6,8 @@ import {
     Arcadia__InvalidBps,
     Arcadia__RiskBandInactive,
     Arcadia__StrategyReportStale,
-    Arcadia__ZeroAddress
+    Arcadia__ZeroAddress,
+    Arcadia__ZeroAmount
 } from "../errors/ArcadiaErrors.sol";
 import { IArcadiaRiskOracle } from "../interfaces/IArcadiaRiskOracle.sol";
 import { FixedPointMath } from "../libraries/FixedPointMath.sol";
@@ -75,6 +76,9 @@ contract ArcadiaRiskOracle is ArcadiaRoles, IArcadiaRiskOracle {
         returns (PriceObservation memory observation)
     {
         observation = observations[marketId];
+        if (observation.observedAt == 0 || staleAfter == 0) {
+            revert Arcadia__StrategyReportStale(address(0), observation.observedAt, staleAfter);
+        }
         if (block.timestamp > uint256(observation.observedAt) + staleAfter) {
             revert Arcadia__StrategyReportStale(address(0), observation.observedAt, staleAfter);
         }
@@ -121,6 +125,7 @@ contract ArcadiaRiskOracle is ArcadiaRoles, IArcadiaRiskOracle {
     }
 
     function _validateBand(RiskBand memory band) internal pure {
+        if (band.active && band.staleAfter == 0) revert Arcadia__ZeroAmount();
         if (band.seniorCoverageBps > ArcadiaTypes.BPS) {
             revert Arcadia__InvalidBps(band.seniorCoverageBps);
         }
