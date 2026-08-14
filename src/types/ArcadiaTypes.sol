@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 /// @notice Shared constants, enums, and data containers used by Arcadia modules.
 library ArcadiaTypes {
+    string internal constant VERSION = "1.0.0";
     uint256 internal constant WAD = 1e18;
     uint256 internal constant BPS = 10_000;
     uint256 internal constant MAX_FEE_BPS = 1000;

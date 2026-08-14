@@ -9,6 +9,7 @@ import {
     Arcadia__StrategyDebtLimitExceeded,
     Arcadia__StrategyNotActive,
     Arcadia__StrategyReportStale,
+    Arcadia__ValueOverflow,
     Arcadia__ZeroAddress
 } from "../errors/ArcadiaErrors.sol";
 import { IArcadiaStrategy } from "../interfaces/IArcadiaStrategy.sol";
@@ -157,6 +158,9 @@ contract ArcadiaStrategyRegistry is ArcadiaRoles {
 
         StrategyReport memory report = IArcadiaStrategy(strategy).report();
         if (report.strategy != strategy) revert Arcadia__InvalidStrategy(strategy);
+        if (report.lastReport == 0 || report.lastReport > block.timestamp) {
+            revert Arcadia__StrategyReportStale(strategy, report.lastReport, config.reportDelay);
+        }
         if (report.totalDebt > config.debtLimit) {
             revert Arcadia__StrategyDebtLimitExceeded(strategy, report.totalDebt, config.debtLimit);
         }
@@ -180,6 +184,14 @@ contract ArcadiaStrategyRegistry is ArcadiaRoles {
     {
         _validateListed(report.strategy);
         StrategyConfig memory config = _configs[report.strategy];
+        if (config.status != StrategyStatus.Active || report.status != StrategyStatus.Active) {
+            revert Arcadia__StrategyNotActive(report.strategy);
+        }
+        if (report.lastReport == 0 || report.lastReport > block.timestamp) {
+            revert Arcadia__StrategyReportStale(
+                report.strategy, report.lastReport, config.reportDelay
+            );
+        }
         if (report.totalDebt > config.debtLimit) {
             revert Arcadia__StrategyDebtLimitExceeded(
                 report.strategy, report.totalDebt, config.debtLimit
@@ -205,7 +217,10 @@ contract ArcadiaStrategyRegistry is ArcadiaRoles {
         _validateListed(strategy);
         StrategyConfig memory config = _configs[strategy];
         report = _reports[strategy];
-        if (block.timestamp > uint256(report.lastReport) + config.reportDelay) {
+        if (
+            report.lastReport == 0 || report.lastReport > block.timestamp
+                || block.timestamp > uint256(report.lastReport) + config.reportDelay
+        ) {
             revert Arcadia__StrategyReportStale(strategy, report.lastReport, config.reportDelay);
         }
     }
@@ -247,8 +262,11 @@ contract ArcadiaStrategyRegistry is ArcadiaRoles {
         StrategyConfig memory config = _configs[strategy];
         uint256 targetDebt = vaultAssets.bpsOf(config.targetDebtBps);
         uint256 currentDebt = _reports[strategy].totalDebt;
-        if (targetDebt >= currentDebt) return int256(targetDebt - currentDebt);
-        return -int256(currentDebt - targetDebt);
+        uint256 absoluteGap =
+            targetDebt >= currentDebt ? targetDebt - currentDebt : currentDebt - targetDebt;
+        if (absoluteGap > uint256(type(int256).max)) revert Arcadia__ValueOverflow(absoluteGap);
+        if (targetDebt >= currentDebt) return int256(absoluteGap);
+        return -int256(absoluteGap);
     }
 
     function aggregateReport() external view returns (StrategyReport memory report) {

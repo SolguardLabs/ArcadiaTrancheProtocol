@@ -5,10 +5,15 @@ import { ArcadiaRoles } from "../access/ArcadiaRoles.sol";
 import {
     Arcadia__InsufficientShares,
     Arcadia__InvalidTranche,
+    Arcadia__MinimumAssetsNotMet,
+    Arcadia__RequestNotReady,
     Arcadia__Unauthorized,
+    Arcadia__ValueOverflow,
     Arcadia__ZeroAddress,
     Arcadia__ZeroAmount
 } from "../errors/ArcadiaErrors.sol";
+import { IERC20 } from "../interfaces/IERC20.sol";
+import { IArcadiaVault } from "../interfaces/IArcadiaVault.sol";
 import { ArcadiaTypes, Tranche } from "../types/ArcadiaTypes.sol";
 
 /// @notice Optional delayed-redemption queue for frontends and guarded deployments.
@@ -36,6 +41,7 @@ contract RedemptionQueue is ArcadiaRoles {
     mapping(uint256 => RedemptionRequest) private _requests;
     mapping(address => uint256[]) private _ownerRequests;
     mapping(uint8 => uint256) public tranchePendingShares;
+    mapping(address => mapping(uint8 => uint256)) public ownerPendingShares;
 
     event RequestCreated(
         uint256 indexed id,
@@ -83,9 +89,21 @@ contract RedemptionQueue is ArcadiaRoles {
         uint8 trancheId = uint8(tranche);
         if (trancheId > uint8(Tranche.Junior)) revert Arcadia__InvalidTranche(trancheId);
 
-        uint64 delay = customDelay == 0 ? defaultDelay : customDelay;
+        if (msg.sender != owner && msg.sender != vault) {
+            revert Arcadia__Unauthorized(bytes32("REQUEST_OWNER"), msg.sender);
+        }
+        uint256 ownerBalance =
+            IERC20(IArcadiaVault(vault).trancheShareToken(tranche)).balanceOf(owner);
+        uint256 available = ownerBalance - ownerPendingShares[owner][trancheId];
+        if (shares > available) revert Arcadia__InsufficientShares(shares, available);
+
+        uint64 delay = customDelay < defaultDelay ? defaultDelay : customDelay;
         id = nextRequestId++;
-        uint64 executableAt = uint64(block.timestamp + delay);
+        uint256 executionTimestamp = block.timestamp + delay;
+        if (executionTimestamp > type(uint64).max) {
+            revert Arcadia__ValueOverflow(executionTimestamp);
+        }
+        uint64 executableAt = uint64(executionTimestamp);
         _requests[id] = RedemptionRequest({
             id: id,
             tranche: tranche,
@@ -101,26 +119,33 @@ contract RedemptionQueue is ArcadiaRoles {
         _ownerRequests[owner].push(id);
         pendingShares += shares;
         tranchePendingShares[trancheId] += shares;
+        ownerPendingShares[owner][trancheId] += shares;
 
         emit RequestCreated(id, tranche, owner, receiver, shares, minAssets, executableAt);
     }
 
     function cancelRequest(uint256 id) external {
-        RedemptionRequest storage request = _activeRequest(id);
-        if (msg.sender != request.owner && !hasRole(ArcadiaTypes.GUARDIAN_ROLE, msg.sender)) {
+        RedemptionRequest storage request_ = _activeRequest(id);
+        if (msg.sender != request_.owner && !hasRole(ArcadiaTypes.GUARDIAN_ROLE, msg.sender)) {
             revert Arcadia__Unauthorized(bytes32("REQUEST_OWNER"), msg.sender);
         }
 
-        request.cancelled = true;
-        _releasePending(request.tranche, request.shares);
+        request_.cancelled = true;
+        _releasePending(request_.owner, request_.tranche, request_.shares);
         cancelledRequests += 1;
-        emit RequestCancelled(id, request.owner);
+        emit RequestCancelled(id, request_.owner);
     }
 
     function markClaimed(uint256 id, uint256 assets) external onlyVault {
-        RedemptionRequest storage request = _activeRequest(id);
-        request.claimed = true;
-        _releasePending(request.tranche, request.shares);
+        RedemptionRequest storage request_ = _activeRequest(id);
+        if (block.timestamp < request_.executableAt) {
+            revert Arcadia__RequestNotReady(id, request_.executableAt);
+        }
+        if (assets < request_.minAssets) {
+            revert Arcadia__MinimumAssetsNotMet(assets, request_.minAssets);
+        }
+        request_.claimed = true;
+        _releasePending(request_.owner, request_.tranche, request_.shares);
         claimedRequests += 1;
         emit RequestClaimed(id, msg.sender, assets);
     }
@@ -170,8 +195,9 @@ contract RedemptionQueue is ArcadiaRoles {
         if (request_.claimed || request_.cancelled) revert Arcadia__InsufficientShares(0, 0);
     }
 
-    function _releasePending(Tranche tranche, uint256 shares) internal {
+    function _releasePending(address owner, Tranche tranche, uint256 shares) internal {
         pendingShares -= shares;
         tranchePendingShares[uint8(tranche)] -= shares;
+        ownerPendingShares[owner][uint8(tranche)] -= shares;
     }
 }

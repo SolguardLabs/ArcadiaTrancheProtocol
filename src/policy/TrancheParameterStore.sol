@@ -5,6 +5,7 @@ import { ArcadiaRoles } from "../access/ArcadiaRoles.sol";
 import {
     Arcadia__InvalidBps,
     Arcadia__InvalidTranche,
+    Arcadia__LimitExceeded,
     Arcadia__ZeroAddress,
     Arcadia__ZeroAmount
 } from "../errors/ArcadiaErrors.sol";
@@ -115,7 +116,9 @@ contract TrancheParameterStore is ArcadiaRoles {
         FlowBucket storage bucket = _buckets[id];
         TrancheLimits memory limit = _limits[id];
         uint256 resulting = uint256(bucket.inflow) + assets;
-        if (resulting > limit.maxDailyInflow) revert Arcadia__ZeroAmount();
+        if (resulting > limit.maxDailyInflow) {
+            revert Arcadia__LimitExceeded(resulting, limit.maxDailyInflow);
+        }
         bucket.inflow = uint128(resulting);
         emit FlowRecorded(tranche, assets, 0, bucket.day);
     }
@@ -130,7 +133,9 @@ contract TrancheParameterStore is ArcadiaRoles {
         FlowBucket storage bucket = _buckets[id];
         TrancheLimits memory limit = _limits[id];
         uint256 resulting = uint256(bucket.outflow) + assets;
-        if (resulting > limit.maxDailyOutflow) revert Arcadia__ZeroAmount();
+        if (resulting > limit.maxDailyOutflow) {
+            revert Arcadia__LimitExceeded(resulting, limit.maxDailyOutflow);
+        }
         bucket.outflow = uint128(resulting);
         emit FlowRecorded(tranche, 0, assets, bucket.day);
     }
@@ -195,6 +200,9 @@ contract TrancheParameterStore is ArcadiaRoles {
             revert Arcadia__InvalidBps(limits_.warningCoverageBps);
         }
         if (limits_.criticalCoverageBps > ArcadiaTypes.BPS) {
+            revert Arcadia__InvalidBps(limits_.criticalCoverageBps);
+        }
+        if (limits_.criticalCoverageBps > limits_.warningCoverageBps) {
             revert Arcadia__InvalidBps(limits_.criticalCoverageBps);
         }
     }

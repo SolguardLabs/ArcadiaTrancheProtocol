@@ -41,3 +41,8 @@ error Arcadia__StrategyReportStale(address strategy, uint256 lastReport, uint256
 error Arcadia__PriceConfidenceLow(uint256 observedBps, uint256 requiredBps);
 error Arcadia__RiskBandInactive(uint8 tranche);
 error Arcadia__TransferFailed();
+error Arcadia__LimitExceeded(uint256 requested, uint256 limit);
+error Arcadia__ValueOverflow(uint256 value);
+error Arcadia__RequestNotReady(uint256 requestId, uint256 executableAt);
+error Arcadia__MinimumAssetsNotMet(uint256 observed, uint256 minimum);
+error Arcadia__CheckpointMismatch(bytes32 expected, bytes32 observed);

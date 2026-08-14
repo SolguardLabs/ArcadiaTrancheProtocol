@@ -1,26 +1,25 @@
-# Foundry
-/cache/
-/out/
+# Foundry artifacts
 /broadcast/
+/cache/
 /lib/
+/out/
 
-# Cobertura y perfiles
+# Coverage and tooling
 /coverage/
 /lcov.info
-
-# Dependencias y herramientas auxiliares
 /node_modules/
 /.idea/
 
-# Variables y datos locales
-.env
-.env.*
-!.env.example
+# Local configuration
+/.env
+/.env.*
+!/.env.example
 *.log
 
-# Sistema operativo
+# Private validation material
+/tests/private/
+/private/
+
+# Operating system files
 .DS_Store
 Thumbs.db
-
-# Documentación interna
-vulnerability.md
