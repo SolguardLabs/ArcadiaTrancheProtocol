@@ -25,8 +25,16 @@ jobs:
           git fetch origin \
             refs/heads/production:refs/remotes/origin/production \
             --no-tags
-          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
-          test "$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")" = "$(git rev-parse origin/production)"
+          tag_refs="$(git ls-remote --tags origin \
+            "refs/tags/${GITHUB_REF_NAME}" \
+            "refs/tags/${GITHUB_REF_NAME}^{}")"
+          tag_object="$(printf '%s\n' "$tag_refs" | awk -v ref="refs/tags/${GITHUB_REF_NAME}" '$2 == ref { print $1 }')"
+          tag_commit="$(printf '%s\n' "$tag_refs" | awk -v ref="refs/tags/${GITHUB_REF_NAME}^{}" '$2 == ref { print $1 }')"
+          test -n "$tag_object"
+          test -n "$tag_commit"
+          test "$tag_object" != "$tag_commit"
+          test "$tag_commit" = "$(git rev-parse origin/production)"
+          test "$tag_commit" = "${GITHUB_SHA}"
           test "${GITHUB_REF_NAME}" = "v1.0.0"
 
       - name: Verify repository boundary
