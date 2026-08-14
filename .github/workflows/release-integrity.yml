@@ -22,7 +22,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch origin production --no-tags
+          git fetch origin \
+            refs/heads/production:refs/remotes/origin/production \
+            --no-tags
           test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
           test "$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")" = "$(git rev-parse origin/production)"
           test "${GITHUB_REF_NAME}" = "v1.0.0"
