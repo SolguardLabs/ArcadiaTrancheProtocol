@@ -1,11 +1,11 @@
 # ArcadiaTrancheProtocol
 
-![ArcadiaTrancheProtocol](./assets/banner.png)
-
 [![CI](https://github.com/SolguardLabs/ArcadiaTrancheProtocol/actions/workflows/ci.yml/badge.svg)](https://github.com/SolguardLabs/ArcadiaTrancheProtocol/actions/workflows/ci.yml)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.24-363636?logo=solidity)](https://docs.soliditylang.org/)
 [![Foundry](https://img.shields.io/badge/Foundry-1.7.1-111111)](https://book.getfoundry.sh/)
 [![License](https://img.shields.io/badge/License-MIT-f4e9d8)](./LICENSE)
+
+![ArcadiaTrancheProtocol](./assets/banner.png)
 
 Arcadia es una infraestructura de crédito estructurado on-chain que agrupa un activo de
 liquidación y distribuye capital, rendimiento y pérdidas entre tres niveles de prioridad:
